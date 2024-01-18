@@ -3,7 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from model.resnet import *
-from model.loss import WeightedDiceLoss
+from model.loss import WeightedDiceLoss, ContrastiveLoss
 from model.ipmt_transformer import IPMTransformer
 from model.ops.modules import MSDeformAttn
 from model.backbone_utils import Backbone
@@ -35,6 +35,7 @@ class IPMTnetwork(nn.Module):
         criterion=WeightedDiceLoss(),
         with_transformer=True,
         trans_multi_lvl=1,
+        contrastive=False,
     ):
         super(IPMTnetwork, self).__init__()
         assert layers in [50, 101]
@@ -46,6 +47,9 @@ class IPMTnetwork(nn.Module):
         if self.with_transformer:
             self.trans_multi_lvl = trans_multi_lvl
         self.reduce_dim = reduce_dim
+        self.contrastive = contrastive
+        if self.contrastive == False:
+            self.freeze_transformer()
 
         self.print_params()
 
@@ -225,6 +229,43 @@ class IPMTnetwork(nn.Module):
         aug_supp_feat = torch.cat(to_merge_fts, dim=1)
         aug_supp_feat = self.supp_merge_feat(aug_supp_feat)
 
+        if self.contrastive:
+            if self.training:
+                (
+                    query_out,
+                    supp_out,
+                    supp_mask_flatten,
+                ) = self.transformer.contrastive_forward(
+                    query_feat,
+                    y.float(),
+                    aug_supp_feat,
+                    s_y.clone().float(),
+                    init_mask.detach(),
+                )
+                prediction = torch.cat([query_out, supp_out], dim=1)
+                q_y = F.interpolate(
+                    (y == 1).view(-1, *img_size).float().unsqueeze(1),
+                    size=(fts_size[0], fts_size[1]),
+                    mode="bilinear",
+                    align_corners=True,
+                )
+                concat_mask = torch.cat([q_y.flatten(1), supp_mask_flatten], dim=1)
+                contrastive_criterion = ContrastiveLoss()
+                contrastive_loss = contrastive_criterion(prediction, concat_mask)
+                return contrastive_loss
+            else:
+                out = self.transformer.contrastive_forward(
+                    query_feat,
+                    y.float(),
+                    aug_supp_feat,
+                    s_y.clone().float(),
+                    init_mask.detach(),
+                )
+                out = F.interpolate(
+                    out, size=(h, w), mode="bilinear", align_corners=True
+                )
+                return out
+
         (
             query_feat_list,
             qry_outputs_mask_list,
@@ -236,6 +277,7 @@ class IPMTnetwork(nn.Module):
             s_y.clone().float(),
             init_mask.detach(),
         )
+
         # fused_query_feat = torch.cat(query_feat_list, dim=1)
         fused_query_feat = query_feat_list
         fused_query_feat = self.merge_multi_lvl_reduce(fused_query_feat)
@@ -246,7 +288,6 @@ class IPMTnetwork(nn.Module):
         out = F.interpolate(out, size=(h, w), mode="bilinear", align_corners=True)
 
         if self.training:
-
             # calculate loss
             main_loss = self.criterion(out, y.long())
 
@@ -331,3 +372,8 @@ class IPMTnetwork(nn.Module):
             corr_query_mask_list.append(corr_query)
         corr_query_mask = torch.cat(corr_query_mask_list, 1).mean(1).unsqueeze(1)
         return corr_query_mask
+
+    def freeze_transformer(self):
+        for name, param in self.transformer.named_parameters():
+            if "con_" in name:
+                param.requires_grad_(False)

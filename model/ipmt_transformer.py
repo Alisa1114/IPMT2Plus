@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from model.ops.modules import MSDeformAttn
 from model.positional_encoding import SinePositionalEncoding
 from einops import rearrange
+from sklearn.ensemble import RandomForestClassifier
 
 
 class FFN(nn.Module):
@@ -137,7 +138,6 @@ class QSCrossAttention(nn.Module):
         self.drop_prob = 0.1
 
     def forward(self, prototype, q_x, qry_attn_mask):
-
         q1 = self.q1_fc(prototype)
         k1 = self.k1_fc(q_x)
         v1 = self.v1_fc(q_x)
@@ -163,6 +163,7 @@ class IPMTransformer(nn.Module):
         num_heads=1,
         su_num_layers=3,
         num_layers=5,
+        num_con_layers=4,
         num_levels=1,
         num_points=9,
         use_ffn=True,
@@ -174,6 +175,7 @@ class IPMTransformer(nn.Module):
         self.num_heads = num_heads
         self.su_num_layers = su_num_layers
         self.num_layers = num_layers
+        self.num_con_layers = num_con_layers
         self.num_levels = num_levels
         self.use_ffn = use_ffn
         self.feedforward_channels = embed_dims * 3
@@ -189,6 +191,22 @@ class IPMTransformer(nn.Module):
         self.merge_conv = []
         self.update_q = []
         self.res_q = []
+
+        self.con_layers = []
+        self.con_layer_norms = []
+        self.con_ffns = []
+
+        # use for contrastive learning
+        for _ in range(self.num_con_layers):
+            self.con_layers.append(
+                MSDeformAttn(embed_dims, num_levels, num_heads, num_points),
+            )
+            self.con_layer_norms.append(nn.LayerNorm(embed_dims))
+            self.con_ffns.append(
+                FFN(embed_dims, self.feedforward_channels, dropout=self.dropout)
+            )
+            self.con_layer_norms.append(nn.LayerNorm(embed_dims))
+
         for c_id in range(self.num_layers):
             self.cross_layers.append(
                 MyCrossAttention(
@@ -202,7 +220,6 @@ class IPMTransformer(nn.Module):
             self.layer_norms.append(nn.LayerNorm(embed_dims))
 
         for l_id in range(self.num_layers):
-
             self.layer_norms.append(nn.LayerNorm(embed_dims))
             if self.use_ffn:
                 self.ffns.append(
@@ -258,6 +275,10 @@ class IPMTransformer(nn.Module):
         )
         self.cross_layers = nn.ModuleList(self.cross_layers)
 
+        self.con_layers = nn.ModuleList(self.con_layers)
+        self.con_ffns = nn.ModuleList(self.con_ffns)
+        self.con_layer_norms = nn.ModuleList(self.con_layer_norms)
+
         self.positional_encoding = SinePositionalEncoding(
             embed_dims // 2, normalize=True
         )
@@ -284,7 +305,6 @@ class IPMTransformer(nn.Module):
     def get_reference_points(self, spatial_shapes, device):
         reference_points_list = []
         for lvl, (H_, W_) in enumerate(spatial_shapes):
-
             ref_y, ref_x = torch.meshgrid(
                 torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
                 torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device),
@@ -431,6 +451,28 @@ class IPMTransformer(nn.Module):
         qry_outputs_mask_list = []
         sup_outputs_mask_list = []
 
+        # use transformer trained by contrastive learning
+        con_ln_id = 0
+        con_ffn_id = 0
+        for l_id in range(self.num_con_layers):
+            s_x = s_x + self.proj_drop(
+                self.con_layers[l_id](
+                    s_x,
+                    reference_points,
+                    s_x,
+                    spatial_shapes,
+                    level_start_index,
+                    supp_valid_mask,
+                )
+            )
+            s_x = self.con_layer_norms[con_ln_id](s_x)
+            con_ln_id += 1
+            if self.use_ffn:
+                s_x = self.con_ffns[con_ffn_id](s_x)
+                con_ffn_id += 1
+                s_x = self.con_layer_norms[con_ln_id](s_x)
+                con_ln_id += 1
+
         prototype = self.prototype.weight.unsqueeze(1).repeat(bs, 1, 1)
         k = s_x
         v = k.clone()
@@ -454,6 +496,28 @@ class IPMTransformer(nn.Module):
         q = x_flatten
         pos = pos_embed_flatten
         qry_attn_mask = init_mask.flatten(1)
+
+        # use transformer trained by contrastive learning
+        con_ln_id = 0
+        con_ffn_id = 0
+        for l_id in range(self.num_con_layers):
+            q = q + self.proj_drop(
+                self.con_layers[l_id](
+                    q + pos,
+                    reference_points,
+                    q,
+                    spatial_shapes,
+                    level_start_index,
+                    qry_valid_masks_flatten,
+                )
+            )
+            q = self.con_layer_norms[con_ln_id](q)
+            con_ln_id += 1
+            if self.use_ffn:
+                q = self.con_ffns[con_ffn_id](q)
+                con_ffn_id += 1
+                q = self.con_layer_norms[con_ln_id](q)
+                con_ln_id += 1
 
         for l_id in range(self.num_layers):
             if self.use_self:
@@ -509,7 +573,6 @@ class IPMTransformer(nn.Module):
         return out, qry_outputs_mask_list, sup_outputs_mask_list
 
     def forward_prediction_heads(self, output, mask_features):
-
         decoder_output = self.decoder_norm(output)  # LayerNorm
         mask_embed = self.mask_embed(decoder_output)
         outputs_mask = torch.einsum("bqc,bkc->bqk", mask_embed, mask_features)
@@ -518,3 +581,96 @@ class IPMTransformer(nn.Module):
         attn_mask = attn_mask.detach()
 
         return outputs_mask, attn_mask
+
+    def contrastive_forward(self, x, qry_masks, s_x, supp_mask, init_mask):
+        if not isinstance(x, list):
+            x = [x]
+        if not isinstance(qry_masks, list):
+            qry_masks = [qry_masks.clone() for _ in range(self.num_levels)]
+
+        assert len(x) == len(qry_masks) == self.num_levels
+        bs, c = x[0].size()[:2]
+
+        (
+            x_flatten,
+            qry_valid_masks_flatten,
+            pos_embed_flatten,
+            spatial_shapes,
+            level_start_index,
+        ) = self.get_qry_flatten_input(x, qry_masks)
+
+        s_x, supp_valid_mask, supp_mask_flatten = self.get_supp_flatten_input(
+            s_x, supp_mask.clone()
+        )
+        reference_points = self.get_reference_points(
+            spatial_shapes, device=x_flatten.device
+        )
+        q = x_flatten
+        pos = pos_embed_flatten
+        qry_attn_mask = init_mask.flatten(1)
+
+        ln_id = 0
+        ffn_id = 0
+
+        for l_id in range(self.num_con_layers):
+            q = q + self.proj_drop(
+                self.con_layers[l_id](
+                    q + pos,
+                    reference_points,
+                    q,
+                    spatial_shapes,
+                    level_start_index,
+                    qry_valid_masks_flatten,
+                )
+            )
+            q = self.con_layer_norms[ln_id](q)
+            ln_id += 1
+            if self.use_ffn:
+                q = self.con_ffns[ffn_id](q)
+                ffn_id += 1
+                q = self.con_layer_norms[ln_id](q)
+                ln_id += 1
+
+        ln_id = 0
+        ffn_id = 0
+
+        for l_id in range(self.num_con_layers):
+            s_x = s_x + self.proj_drop(
+                self.con_layers[l_id](
+                    s_x,
+                    reference_points,
+                    s_x,
+                    spatial_shapes,
+                    level_start_index,
+                    supp_valid_mask,
+                )
+            )
+            s_x = self.con_layer_norms[ln_id](s_x)
+            ln_id += 1
+            if self.use_ffn:
+                s_x = self.con_ffns[ffn_id](s_x)
+                ffn_id += 1
+                s_x = self.con_layer_norms[ln_id](s_x)
+                ln_id += 1
+
+        if self.training:
+            return q, s_x, supp_mask_flatten
+        else:
+            probs = []
+            for i in range(s_x.shape[0]):
+                classifier = RandomForestClassifier(
+                    max_depth=3,
+                    min_samples_leaf=10,
+                    random_state=0,
+                    n_jobs=-1,
+                    n_estimators=25,
+                )
+                X = s_x[i].detach().cpu().numpy()
+                y = supp_mask_flatten[i].cpu().numpy()
+                classifier.fit(X, y)
+                X_test = q[i].detach().cpu().numpy()
+                test_prob = classifier.predict_proba(X_test)
+                probs.append(test_prob)
+            probs = torch.tensor(probs, device=q.device)
+            probs = probs.permute(0, 2, 1).reshape(1, 2, 60, 60)
+            return probs

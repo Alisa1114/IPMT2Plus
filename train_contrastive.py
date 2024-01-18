@@ -1,29 +1,29 @@
+import argparse
+import logging
 import os
 import random
 import time
+
 import cv2
 import numpy as np
-import logging
-import argparse
-
 import torch
 import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.parallel
 import torch.optim
 import torch.utils.data
-import torch.multiprocessing as mp
-import torch.distributed as dist
 from tensorboardX import SummaryWriter
+
 from model.IPMTnetwork import IPMTnetwork
-from util import dataset
-from util import transform, config
+from util import config, dataset, transform
 from util.util import (
     AverageMeter,
+    intersectionAndUnionGPU,
     poly_learning_rate,
     step_learning_rate,
-    intersectionAndUnionGPU,
 )
 
 cv2.ocl.setUseOpenCL(False)
@@ -71,7 +71,7 @@ def main():
     args = get_parser()
     assert args.classes > 1
     assert (args.train_h - 1) % 8 == 0 and (args.train_w - 1) % 8 == 0
-    # os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in args.train_gpu)
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(x) for x in args.train_gpu)
     if args.manual_seed is not None:
         cudnn.benchmark = False
         cudnn.deterministic = True
@@ -99,7 +99,7 @@ def main():
         main_worker(args.train_gpu, args.ngpus_per_node, args)
 
 
-def main_worker(argss):
+def main_worker(gpu, ngpus_per_node, argss):
     global args
     args = argss
 
@@ -108,6 +108,7 @@ def main_worker(argss):
         shot=args.shot,
         reduce_dim=args.hidden_dims,
         with_transformer=args.with_transformer,
+        contrastive=True,
     )
 
     param_dicts = [
@@ -208,6 +209,7 @@ def main_worker(argss):
             padding=mean,
             ignore_label=args.padding_label,
         ),
+        # transform.Resize(size=args.train_h),
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std),
     ]
@@ -282,16 +284,13 @@ def main_worker(argss):
             random.seed(args.manual_seed + epoch)
 
         epoch_log = epoch + 1
-        loss_train, mIoU_train, mAcc_train, allAcc_train = train(
-            train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs
+        contrastive_loss = train(
+            train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs, args
         )
         if main_process():
-            writer.add_scalar("loss_train", loss_train, epoch_log)
-            writer.add_scalar("mIoU_train", mIoU_train, epoch_log)
-            writer.add_scalar("mAcc_train", mAcc_train, epoch_log)
-            writer.add_scalar("allAcc_train", allAcc_train, epoch_log)
+            writer.add_scalar("contrastive_loss_train", contrastive_loss, epoch_log)
 
-        if args.evaluate and epoch > 70:
+        if args.evaluate and epoch > args.epochs // 5:
             loss_val, mIoU_val, mAcc_val, allAcc_val, class_miou = validate(
                 val_loader, model
             )
@@ -307,7 +306,10 @@ def main_worker(argss):
                     os.remove(filename)
                 filename = (
                     args.save_path
-                    + "/train_epoch_"
+                    + "/"
+                    + str(args.shot)
+                    + "_shot_"
+                    + "train_epoch_"
                     + str(epoch)
                     + "_"
                     + str(max_iou)
@@ -323,7 +325,7 @@ def main_worker(argss):
                     filename,
                 )
 
-    filename = args.save_path + "/final.pth"
+    filename = args.save_path + "/" + str(args.shot) + "_shot_" + "final.pth"
     logger.info("Saving checkpoint to: " + filename)
     torch.save(
         {
@@ -335,22 +337,23 @@ def main_worker(argss):
     )
 
 
-def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs):
+def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs, args):
     batch_time = AverageMeter()
     data_time = AverageMeter()
-    main_loss_meter = AverageMeter()
-    aux_loss_meter = AverageMeter()
-    loss_meter = AverageMeter()
-    intersection_meter = AverageMeter()
-    union_meter = AverageMeter()
-    target_meter = AverageMeter()
+    contrastive_loss_meter = AverageMeter()
 
     model.train()
     end = time.time()
     max_iter = args.epochs * len(train_loader)
     vis_key = 0
     print("Warmup: {}".format(args.warmup))
-    for i, (input, target, s_input, s_mask, subcls) in enumerate(train_loader):
+    for i, (
+        input,
+        target,
+        s_input,
+        s_mask,
+        subcls,
+    ) in enumerate(train_loader):
         data_time.update(time.time() - end)
         current_iter = epoch * len(train_loader) + i + 1
         index_split = -1
@@ -371,48 +374,18 @@ def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs
         input = input.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
-        output, main_loss, aux_loss = model(s_x=s_input, s_y=s_mask, x=input, y=target)
+        contrastive_loss = model(s_x=s_input, s_y=s_mask, x=input, y=target)
 
-        if not args.multiprocessing_distributed:
-            main_loss, aux_loss = torch.mean(main_loss), torch.mean(aux_loss)
-        loss = main_loss + args.aux_weight * aux_loss
+        loss = contrastive_loss
         optimizer.zero_grad()
         transformer_optimizer.zero_grad()
-
         loss.backward()
         optimizer.step()
         transformer_optimizer.step()
 
         n = input.size(0)
-        if args.multiprocessing_distributed:
-            main_loss, aux_loss, loss = main_loss.detach() * n, aux_loss * n, loss * n
-            count = target.new_tensor([n], dtype=torch.long)
-            dist.all_reduce(main_loss), dist.all_reduce(aux_loss), dist.all_reduce(
-                loss
-            ), dist.all_reduce(count)
-            n = count.item()
-            main_loss, aux_loss, loss = main_loss / n, aux_loss / n, loss / n
 
-        intersection, union, target = intersectionAndUnionGPU(
-            output, target, args.classes, args.ignore_label
-        )
-        if args.multiprocessing_distributed:
-            dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(
-                target
-            )
-        intersection, union, target = (
-            intersection.cpu().numpy(),
-            union.cpu().numpy(),
-            target.cpu().numpy(),
-        )
-        intersection_meter.update(intersection), union_meter.update(
-            union
-        ), target_meter.update(target)
-
-        accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
-        main_loss_meter.update(main_loss.item(), n)
-        aux_loss_meter.update(aux_loss.item(), n)
-        loss_meter.update(loss.item(), n)
+        contrastive_loss_meter.update(contrastive_loss.item(), n)
         batch_time.update(time.time() - end)
         end = time.time()
 
@@ -428,10 +401,7 @@ def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs
                 "Data {data_time.val:.3f} ({data_time.avg:.3f}) "
                 "Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) "
                 "Remain {remain_time} "
-                "MainLoss {main_loss_meter.val:.4f} "
-                "AuxLoss {aux_loss_meter.val:.4f} "
-                "Loss {loss_meter.val:.4f} "
-                "Accuracy {accuracy:.4f}.".format(
+                "ContrastiveLoss {contrastive_loss.val:.4f}.".format(
                     epoch + 1,
                     args.epochs,
                     i + 1,
@@ -439,45 +409,22 @@ def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs
                     batch_time=batch_time,
                     data_time=data_time,
                     remain_time=remain_time,
-                    main_loss_meter=main_loss_meter,
-                    aux_loss_meter=aux_loss_meter,
-                    loss_meter=loss_meter,
-                    accuracy=accuracy,
+                    contrastive_loss=contrastive_loss_meter,
                 )
             )
         if main_process():
-            writer.add_scalar("loss_train_batch", main_loss_meter.val, current_iter)
             writer.add_scalar(
-                "mIoU_train_batch",
-                np.mean(intersection / (union + 1e-10)),
-                current_iter,
+                "contrastive_loss_train_batch", contrastive_loss_meter.val, current_iter
             )
-            writer.add_scalar(
-                "mAcc_train_batch",
-                np.mean(intersection / (target + 1e-10)),
-                current_iter,
-            )
-            writer.add_scalar("allAcc_train_batch", accuracy, current_iter)
-
-    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
-    accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
-    mIoU = np.mean(iou_class)
-    mAcc = np.mean(accuracy_class)
-    allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
 
     if main_process():
         logger.info(
-            "Train result at epoch [{}/{}]: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.".format(
-                epoch, args.epochs, mIoU, mAcc, allAcc
+            "Train result at epoch [{}/{}]: Contrastive_loss {:.4f}.".format(
+                epoch, args.epochs, contrastive_loss_meter.avg
             )
         )
-        for i in range(args.classes):
-            logger.info(
-                "Class_{} Result: iou/accuracy {:.4f}/{:.4f}.".format(
-                    i, iou_class[i], accuracy_class[i]
-                )
-            )
-    return main_loss_meter.avg, mIoU, mAcc, allAcc
+
+    return contrastive_loss_meter.avg
 
 
 def validate(val_loader, model, criterion=nn.CrossEntropyLoss(ignore_index=255)):
