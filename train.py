@@ -96,7 +96,8 @@ def main():
             main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args)
         )
     else:
-        main_worker(args.train_gpu, args.ngpus_per_node, args)
+        # main_worker(args.train_gpu, args.ngpus_per_node, args)
+        main_worker(args)
 
 
 def main_worker(argss):

@@ -48,8 +48,6 @@ class IPMTnetwork(nn.Module):
             self.trans_multi_lvl = trans_multi_lvl
         self.reduce_dim = reduce_dim
         self.contrastive = contrastive
-        if self.contrastive == False:
-            self.freeze_transformer()
 
         self.print_params()
 
@@ -93,6 +91,9 @@ class IPMTnetwork(nn.Module):
             self.transformer = IPMTransformer(
                 embed_dims=reduce_dim, num_points=9, shot=self.shot
             )
+            if self.contrastive == False:
+                self.freeze_transformer()
+
             self.merge_multi_lvl_reduce = nn.Sequential(
                 nn.Conv2d(
                     reduce_dim * 1, reduce_dim, kernel_size=1, padding=0, bias=False
