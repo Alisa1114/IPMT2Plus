@@ -454,6 +454,21 @@ class IPMTransformer(nn.Module):
         # use transformer trained by contrastive learning
         con_ln_id = 0
         con_ffn_id = 0
+
+        s_x = rearrange(
+            s_x,
+            "b (k h w) c -> (b k) (h w) c",
+            k=self.shot,
+            h=60,
+            w=60,
+            c=self.embed_dims,
+        )
+        supp_mask_flatten = rearrange(
+            supp_mask_flatten, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
+        )
+        supp_valid_mask = rearrange(
+            supp_valid_mask, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
+        )
         for l_id in range(self.num_con_layers):
             s_x = s_x + self.proj_drop(
                 self.con_layers[l_id](
@@ -472,6 +487,21 @@ class IPMTransformer(nn.Module):
                 con_ffn_id += 1
                 s_x = self.con_layer_norms[con_ln_id](s_x)
                 con_ln_id += 1
+
+        s_x = rearrange(
+            s_x,
+            "(b k) (h w) c -> b (k h w) c",
+            k=self.shot,
+            h=60,
+            w=60,
+            c=self.embed_dims,
+        )
+        supp_mask_flatten = rearrange(
+            supp_mask_flatten, "(b k) (h w) -> b (k h w)", k=self.shot, h=60, w=60
+        )
+        supp_valid_mask = rearrange(
+            supp_valid_mask, "(b k) (h w) -> b (k h w)", k=self.shot, h=60, w=60
+        )
 
         prototype = self.prototype.weight.unsqueeze(1).repeat(bs, 1, 1)
         k = s_x
@@ -576,7 +606,13 @@ class IPMTransformer(nn.Module):
         decoder_output = self.decoder_norm(output)  # LayerNorm
         mask_embed = self.mask_embed(decoder_output)
         outputs_mask = torch.einsum("bqc,bkc->bqk", mask_embed, mask_features)
-        outputs_mask = rearrange(outputs_mask, "b q (h w) -> b q h w", w=60, h=60)
+        if outputs_mask.shape[-1] == 3600:
+            outputs_mask = rearrange(outputs_mask, "b q (h w) -> b q h w", w=60, h=60)
+        else:
+            outputs_mask = rearrange(
+                outputs_mask, "b q (k h w) -> b q k h w", k=self.shot, w=60, h=60
+            )
+            outputs_mask = outputs_mask.squeeze(1)
         attn_mask = (outputs_mask.sigmoid().flatten(1) >= 0.5).bool()
         attn_mask = attn_mask.detach()
 

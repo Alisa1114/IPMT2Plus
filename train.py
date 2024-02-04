@@ -311,6 +311,8 @@ def main_worker(argss):
                     + "/train_epoch_"
                     + str(epoch)
                     + "_"
+                    + str(args.shot)
+                    + "shot_"
                     + str(max_iou)
                     + ".pth"
                 )
