@@ -275,6 +275,7 @@ class IPMTransformer(nn.Module):
         )
         self.cross_layers = nn.ModuleList(self.cross_layers)
 
+        # contrastive learning
         self.con_layers = nn.ModuleList(self.con_layers)
         self.con_ffns = nn.ModuleList(self.con_ffns)
         self.con_layer_norms = nn.ModuleList(self.con_layer_norms)

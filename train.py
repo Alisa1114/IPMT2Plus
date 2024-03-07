@@ -292,7 +292,7 @@ def main_worker(argss):
             writer.add_scalar("mAcc_train", mAcc_train, epoch_log)
             writer.add_scalar("allAcc_train", allAcc_train, epoch_log)
 
-        if args.evaluate and epoch > 70:
+        if args.evaluate and epoch > args.epochs // 5:
             loss_val, mIoU_val, mAcc_val, allAcc_val, class_miou = validate(
                 val_loader, model
             )
@@ -312,7 +312,7 @@ def main_worker(argss):
                     + str(epoch)
                     + "_"
                     + str(args.shot)
-                    + "shot_"
+                    + "-shot_"
                     + str(max_iou)
                     + ".pth"
                 )
