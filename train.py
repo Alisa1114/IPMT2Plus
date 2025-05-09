@@ -353,6 +353,11 @@ def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs
     max_iter = args.epochs * len(train_loader)
     vis_key = 0
     print("Warmup: {}".format(args.warmup))
+    
+    accumulation_steps = 4 // args.batch_size
+    optimizer.zero_grad()
+    transformer_optimizer.zero_grad()
+    
     for i, (input, target, s_input, s_mask, subcls) in enumerate(train_loader):
         data_time.update(time.time() - end)
         current_iter = epoch * len(train_loader) + i + 1
@@ -379,12 +384,21 @@ def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs
         if not args.multiprocessing_distributed:
             main_loss, aux_loss = torch.mean(main_loss), torch.mean(aux_loss)
         loss = main_loss + args.aux_weight * aux_loss
-        optimizer.zero_grad()
-        transformer_optimizer.zero_grad()
-
+        
+        loss = loss / accumulation_steps
         loss.backward()
-        optimizer.step()
-        transformer_optimizer.step()
+        if (i + 1) % accumulation_steps == 0:
+            optimizer.step()
+            transformer_optimizer.step()
+            optimizer.zero_grad()
+            transformer_optimizer.zero_grad()
+        
+        # optimizer.zero_grad()
+        # transformer_optimizer.zero_grad()
+
+        # loss.backward()
+        # optimizer.step()
+        # transformer_optimizer.step()
 
         n = input.size(0)
         if args.multiprocessing_distributed:
@@ -462,6 +476,12 @@ def train(train_loader, model, optimizer, transformer_optimizer, epoch, base_lrs
             )
             writer.add_scalar("allAcc_train_batch", accuracy, current_iter)
 
+    if (i + 1) % accumulation_steps != 0:
+        optimizer.step()
+        transformer_optimizer.step()
+        optimizer.zero_grad()
+        transformer_optimizer.zero_grad()
+    
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
     mIoU = np.mean(iou_class)

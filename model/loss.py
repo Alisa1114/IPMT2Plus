@@ -82,6 +82,7 @@ class ContrastiveLoss(nn.Module):
         reduction: str = "mean",
         alpha: float = 0.1,
         beta: float = 0.5,
+        gamma: float = 0.1,
         margin: float = 2.0,
     ):
         super(ContrastiveLoss, self).__init__()
@@ -89,19 +90,23 @@ class ContrastiveLoss(nn.Module):
         self.reduction = reduction
         self.alpha = alpha
         self.beta = beta
+        self.gamma = gamma
         self.margin = margin
 
     def forward(self, prediction, target_seg):
-        length = target_seg.shape[1]
-        mask1 = target_seg.unsqueeze(1).repeat(1, length, 1)
-        mask2 = target_seg.unsqueeze(2).repeat(1, 1, length)
-        y = (mask1 == mask2).float()
+        n, length = target_seg.shape
+        background_index = target_seg == 0
+        neg_pairs = (background_index.unsqueeze(1) ==
+                     background_index.unsqueeze(2)).float()
+        pos_pairs = (target_seg.unsqueeze(1) ==
+                     target_seg.unsqueeze(2)).float() - neg_pairs
+
         dist = torch.cdist(prediction, prediction, p=self.p)
-        loss = self.alpha * y * (dist**2) + self.beta * (1.0 - y) * (
+        loss = self.alpha * pos_pairs * (dist**2) + self.beta * (1.0 - (pos_pairs + neg_pairs)) * (
             torch.clamp(self.margin - dist, min=0.0) ** 2
-        )
+        ) + self.gamma * neg_pairs * (dist**2)
 
         if self.reduction == "mean":
             return loss.mean()
         else:
-            return loss.sum()
+            return loss.sum() / n

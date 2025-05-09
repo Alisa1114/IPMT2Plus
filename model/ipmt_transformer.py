@@ -438,6 +438,7 @@ class IPMTransformer(nn.Module):
             level_start_index,
         ) = self.get_qry_flatten_input(x, qry_masks)
 
+        
         s_x, supp_valid_mask, supp_mask_flatten = self.get_supp_flatten_input(
             s_x, supp_mask.clone()
         )
@@ -453,56 +454,56 @@ class IPMTransformer(nn.Module):
         sup_outputs_mask_list = []
 
         # use transformer trained by contrastive learning
-        con_ln_id = 0
-        con_ffn_id = 0
+        # con_ln_id = 0
+        # con_ffn_id = 0
 
-        s_x = rearrange(
-            s_x,
-            "b (k h w) c -> (b k) (h w) c",
-            k=self.shot,
-            h=60,
-            w=60,
-            c=self.embed_dims,
-        )
-        supp_mask_flatten = rearrange(
-            supp_mask_flatten, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
-        )
-        supp_valid_mask = rearrange(
-            supp_valid_mask, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
-        )
-        for l_id in range(self.num_con_layers):
-            s_x = s_x + self.proj_drop(
-                self.con_layers[l_id](
-                    s_x,
-                    reference_points,
-                    s_x,
-                    spatial_shapes,
-                    level_start_index,
-                    supp_valid_mask,
-                )
-            )
-            s_x = self.con_layer_norms[con_ln_id](s_x)
-            con_ln_id += 1
-            if self.use_ffn:
-                s_x = self.con_ffns[con_ffn_id](s_x)
-                con_ffn_id += 1
-                s_x = self.con_layer_norms[con_ln_id](s_x)
-                con_ln_id += 1
+        # s_x = rearrange(
+        #     s_x,
+        #     "b (k h w) c -> (b k) (h w) c",
+        #     k=self.shot,
+        #     h=60,
+        #     w=60,
+        #     c=self.embed_dims,
+        # )
+        # supp_mask_flatten = rearrange(
+        #     supp_mask_flatten, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
+        # )
+        # supp_valid_mask = rearrange(
+        #     supp_valid_mask, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
+        # )
+        # for l_id in range(self.num_con_layers):
+        #     s_x = s_x + self.proj_drop(
+        #         self.con_layers[l_id](
+        #             s_x,
+        #             reference_points,
+        #             s_x,
+        #             spatial_shapes,
+        #             level_start_index,
+        #             supp_valid_mask,
+        #         )
+        #     )
+        #     s_x = self.con_layer_norms[con_ln_id](s_x)
+        #     con_ln_id += 1
+        #     if self.use_ffn:
+        #         s_x = self.con_ffns[con_ffn_id](s_x)
+        #         con_ffn_id += 1
+        #         s_x = self.con_layer_norms[con_ln_id](s_x)
+        #         con_ln_id += 1
 
-        s_x = rearrange(
-            s_x,
-            "(b k) (h w) c -> b (k h w) c",
-            k=self.shot,
-            h=60,
-            w=60,
-            c=self.embed_dims,
-        )
-        supp_mask_flatten = rearrange(
-            supp_mask_flatten, "(b k) (h w) -> b (k h w)", k=self.shot, h=60, w=60
-        )
-        supp_valid_mask = rearrange(
-            supp_valid_mask, "(b k) (h w) -> b (k h w)", k=self.shot, h=60, w=60
-        )
+        # s_x = rearrange(
+        #     s_x,
+        #     "(b k) (h w) c -> b (k h w) c",
+        #     k=self.shot,
+        #     h=60,
+        #     w=60,
+        #     c=self.embed_dims,
+        # )
+        # supp_mask_flatten = rearrange(
+        #     supp_mask_flatten, "(b k) (h w) -> b (k h w)", k=self.shot, h=60, w=60
+        # )
+        # supp_valid_mask = rearrange(
+        #     supp_valid_mask, "(b k) (h w) -> b (k h w)", k=self.shot, h=60, w=60
+        # )
 
         prototype = self.prototype.weight.unsqueeze(1).repeat(bs, 1, 1)
         k = s_x
@@ -529,26 +530,26 @@ class IPMTransformer(nn.Module):
         qry_attn_mask = init_mask.flatten(1)
 
         # use transformer trained by contrastive learning
-        con_ln_id = 0
-        con_ffn_id = 0
-        for l_id in range(self.num_con_layers):
-            q = q + self.proj_drop(
-                self.con_layers[l_id](
-                    q + pos,
-                    reference_points,
-                    q,
-                    spatial_shapes,
-                    level_start_index,
-                    qry_valid_masks_flatten,
-                )
-            )
-            q = self.con_layer_norms[con_ln_id](q)
-            con_ln_id += 1
-            if self.use_ffn:
-                q = self.con_ffns[con_ffn_id](q)
-                con_ffn_id += 1
-                q = self.con_layer_norms[con_ln_id](q)
-                con_ln_id += 1
+        # con_ln_id = 0
+        # con_ffn_id = 0
+        # for l_id in range(self.num_con_layers):
+        #     q = q + self.proj_drop(
+        #         self.con_layers[l_id](
+        #             q + pos,
+        #             reference_points,
+        #             q,
+        #             spatial_shapes,
+        #             level_start_index,
+        #             qry_valid_masks_flatten,
+        #         )
+        #     )
+        #     q = self.con_layer_norms[con_ln_id](q)
+        #     con_ln_id += 1
+        #     if self.use_ffn:
+        #         q = self.con_ffns[con_ffn_id](q)
+        #         con_ffn_id += 1
+        #         q = self.con_layer_norms[con_ln_id](q)
+        #         con_ln_id += 1
 
         for l_id in range(self.num_layers):
             if self.use_self:
@@ -670,6 +671,21 @@ class IPMTransformer(nn.Module):
 
         ln_id = 0
         ffn_id = 0
+        
+        s_x = rearrange(
+            s_x,
+            "b (k h w) c -> (b k) (h w) c",
+            k=self.shot,
+            h=60,
+            w=60,
+            c=self.embed_dims,
+        )
+        supp_mask_flatten = rearrange(
+            supp_mask_flatten, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
+        )
+        supp_valid_mask = rearrange(
+            supp_valid_mask, "b (k h w) -> (b k) (h w)", k=self.shot, h=60, w=60
+        )
 
         for l_id in range(self.num_con_layers):
             s_x = s_x + self.proj_drop(
@@ -690,24 +706,18 @@ class IPMTransformer(nn.Module):
                 s_x = self.con_layer_norms[ln_id](s_x)
                 ln_id += 1
 
-        if self.training:
-            return q, s_x, supp_mask_flatten
-        else:
-            probs = []
-            for i in range(s_x.shape[0]):
-                classifier = RandomForestClassifier(
-                    max_depth=3,
-                    min_samples_leaf=10,
-                    random_state=0,
-                    n_jobs=-1,
-                    n_estimators=25,
-                )
-                X = s_x[i].detach().cpu().numpy()
-                y = supp_mask_flatten[i].cpu().numpy()
-                classifier.fit(X, y)
-                X_test = q[i].detach().cpu().numpy()
-                test_prob = classifier.predict_proba(X_test)
-                probs.append(test_prob)
-            probs = torch.tensor(probs, device=q.device)
-            probs = probs.permute(0, 2, 1).reshape(1, 2, 60, 60)
-            return probs
+        s_x = rearrange(
+            s_x,
+            "(b k) (h w) c -> b k (h w) c",
+            k=self.shot,
+            h=60,
+            w=60,
+            c=self.embed_dims,
+        )
+        
+        supp_mask_flatten = rearrange(
+            supp_mask_flatten, "(b k) (h w) -> b k (h w)", k=self.shot, h=60, w=60
+        )
+        
+        return q, s_x, supp_mask_flatten
+        

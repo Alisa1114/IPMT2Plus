@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from einops import rearrange
 
 from model.resnet import *
 from model.loss import WeightedDiceLoss, ContrastiveLoss
@@ -91,9 +92,7 @@ class IPMTnetwork(nn.Module):
             self.transformer = IPMTransformer(
                 embed_dims=reduce_dim, num_points=9, shot=self.shot
             )
-            if self.contrastive == False:
-                self.freeze_transformer()
-
+            
             self.merge_multi_lvl_reduce = nn.Sequential(
                 nn.Conv2d(
                     reduce_dim * 1, reduce_dim, kernel_size=1, padding=0, bias=False
@@ -230,42 +229,49 @@ class IPMTnetwork(nn.Module):
         aug_supp_feat = torch.cat(to_merge_fts, dim=1)
         aug_supp_feat = self.supp_merge_feat(aug_supp_feat)
 
-        if self.contrastive:
-            if self.training:
-                (
-                    query_out,
-                    supp_out,
-                    supp_mask_flatten,
-                ) = self.transformer.contrastive_forward(
-                    query_feat,
-                    y.float(),
-                    aug_supp_feat,
-                    s_y.clone().float(),
-                    init_mask.detach(),
-                )
-                prediction = torch.cat([query_out, supp_out], dim=1)
-                q_y = F.interpolate(
-                    (y == 1).view(-1, *img_size).float().unsqueeze(1),
-                    size=(fts_size[0], fts_size[1]),
-                    mode="bilinear",
-                    align_corners=True,
-                )
-                concat_mask = torch.cat([q_y.flatten(1), supp_mask_flatten], dim=1)
-                contrastive_criterion = ContrastiveLoss()
-                contrastive_loss = contrastive_criterion(prediction, concat_mask)
-                return contrastive_loss
-            else:
-                out = self.transformer.contrastive_forward(
-                    query_feat,
-                    y.float(),
-                    aug_supp_feat,
-                    s_y.clone().float(),
-                    init_mask.detach(),
-                )
-                out = F.interpolate(
-                    out, size=(h, w), mode="bilinear", align_corners=True
-                )
-                return out
+        (
+            query_feat, # bs, h*w, c
+            aug_supp_feat, # bs, k, h*w, c
+            supp_mask_flatten, # bs, k, h*w
+        ) = self.transformer.contrastive_forward(
+            query_feat,
+            y.float(),
+            aug_supp_feat,
+            s_y.clone().float(),
+            init_mask.detach(),
+        )
+        q_y = F.interpolate(
+            (y == 1).view(-1, *img_size).float().unsqueeze(1),
+            size=(fts_size[0], fts_size[1]),
+            mode="bilinear",
+            align_corners=True,
+        )
+        
+        contrastive_loss = []
+        contrastive_criterion = ContrastiveLoss()
+        
+        for sh_id in range(self.shot):
+            concat_mask = torch.cat([q_y.flatten(1), supp_mask_flatten[:, sh_id, ...]], dim=1)
+            prediction = torch.cat([query_feat, aug_supp_feat[:, sh_id, ...]], dim=1)
+            contrastive_loss.append(contrastive_criterion(prediction, concat_mask))
+        contrastive_loss = torch.stack(contrastive_loss).mean()
+
+        query_feat = rearrange(
+            query_feat,
+            "b (h w) c -> b c h w",
+            h=60,
+            w=60,
+            c=self.reduce_dim,
+        )
+        
+        aug_supp_feat = rearrange(
+            aug_supp_feat,
+            "b k (h w) c -> (b k) c h w",
+            k=self.shot,
+            h=60,
+            w=60,
+            c=self.reduce_dim,
+        )
 
         (
             query_feat_list,
@@ -318,7 +324,7 @@ class IPMTnetwork(nn.Module):
 
             erfa = 0.3
 
-            aux_loss = erfa * aux_loss_q + (1 - erfa) * aux_loss_s
+            aux_loss = erfa * aux_loss_q + (1 - erfa) * aux_loss_s + contrastive_loss
 
             return out.max(1)[1], 0.7 * main_loss + 0.3 * main_loss2, aux_loss
         else:
