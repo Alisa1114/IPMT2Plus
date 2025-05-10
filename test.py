@@ -33,9 +33,8 @@ def get_parser():
     parser = argparse.ArgumentParser(description="PyTorch Semantic Segmentation")
     parser.add_argument("--config", type=str, required=True, help="config file")
     parser.add_argument("--opts", default=None, nargs=argparse.REMAINDER)
-    # args = parser.parse_args()
-    # assert args.config is not None
-    cfg = config.load_cfg_from_cfg_file("config/pascal/pascal_split0_resnet50.yaml")
+    args = parser.parse_args()
+    cfg = config.load_cfg_from_cfg_file(args.config)
     return cfg
 
 
