@@ -62,7 +62,7 @@ This repo contains the code for our "*IPMT++: Improving Few-shot Semantic Segmen
 ### Visualization
 
 <p align="middle">
-    <img src="figure/visualization.png">
+    <img src="figure/fss-vis.png">
 </p>
 
 ## References
