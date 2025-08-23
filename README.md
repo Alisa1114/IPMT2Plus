@@ -23,10 +23,6 @@ This repo contains the code for our "*IPMT++: Improving Few-shot Semantic Segmen
 
 - COCO-20<sup>i</sup>:  [COCO2014](https://cocodataset.org/#download)
 
-### Models
-
-- We provide all trained TPMT [models](https://drive.google.com/drive/folders/1qgxKQSQvGOqLqAdzGmnyHuaBUxpesJNE?usp=sharing) for performance evaluation.
-
 ### Scripts
 
 - **Step1** *choose training methods*
