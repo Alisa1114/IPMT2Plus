@@ -1,5 +1,5 @@
 # Intermediate Prototype Mining Transformer for Few-Shot Semantic Segmentation
-This repo contains the code for our **NeurIPS 2022** "*IPMT++: Improving Few-shot Semantic Segmentation with Contrastive Learning*" by Ching Chen, . Hsin Lung W.
+This repo contains the code for our "*IPMT++: Improving Few-shot Semantic Segmentation with Contrastive Learning*" by Ching Chen, Hsin Lung W.
 
 <p align="middle">
   <img src="figure/few_shot_contrastive_learning-separate.png">
