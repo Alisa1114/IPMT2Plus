@@ -1,4 +1,4 @@
-# Intermediate Prototype Mining Transformer for Few-Shot Semantic Segmentation
+# IPMT++: Improving Few-shot Semantic Segmentation with Contrastive Learning
 This repo contains the code for our "*IPMT++: Improving Few-shot Semantic Segmentation with Contrastive Learning*" by Ching Chen, Hsin Lung Wu.
 
 <p align="middle">
