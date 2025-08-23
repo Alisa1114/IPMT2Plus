@@ -81,7 +81,7 @@ class ContrastiveLoss(nn.Module):
         p: int = 2,
         reduction: str = "mean",
         alpha: float = 0.1,
-        beta: float = 0.3,
+        beta: float = 0.5,
         margin: float = 2.0,
     ):
         super(ContrastiveLoss, self).__init__()
