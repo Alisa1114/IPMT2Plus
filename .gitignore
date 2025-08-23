@@ -1,4 +1,8 @@
-config/
 data/
 exp/
 initmodel/
+exp-adjust-alpha-beta/
+exp-paper/
+original_exp/
+__pycache__
+exp-config
