@@ -1,11 +1,13 @@
 # Intermediate Prototype Mining Transformer for Few-Shot Semantic Segmentation
-This repo contains the code for our **NeurIPS 2022** "*Intermediate Prototype Mining Transformer for Few-Shot Semantic Segmentation*" by Yuanwei Liu, Nian Liu, Xiwen Yao, Junwei Han.
-
-> **Abstract:** *Few-shot semantic segmentation aims to segment the target objects in query under the condition of a few annotated support images. Most previous works strive to mine more effective category information from the support to match with the corresponding objects in query. However, they all ignored the category information gap between query and support images. If the objects in them show large intra-class diversity, forcibly migrating the category information from the support to the query is ineffective. To solve this problem, we are the first to introduce an intermediate prototype for mining both deterministic category information from the support and adaptive category knowledge from the query. Specifically, we design an Intermediate Prototype Mining Transformer (IPMT) to learn the prototype in an iterative way. In each IPMT layer, we propagate the object information in both support and query features to the prototype and then use it to activate the query feature map. By conducting this process iteratively, both the intermediate prototype and the query feature can be progressively improved. At last, the final query feature is used to yield precise segmentation prediction. Extensive experiments on both PASCAL- 5<sup>i</sup> and COCO- 20<sup>i</sup> datasets clearly verify the effectiveness of our IPMT and show that it outperforms previous state-of-the-art methods by a large margin.*
+This repo contains the code for our "*IPMT++: Improving Few-shot Semantic Segmentation with Contrastive Learning*" by Ching Chen, Hsin Lung W.
 
 <p align="middle">
-  <img src="figure/flowchat.jpg">
+  <img src="figure/few_shot_contrastive_learning-separate.png">
 </p>
+<p align="middle">
+  <img src="figure/few_shot_contrastive_learning-combine.png">
+</p>
+
 
 ## Dependencies
 
@@ -27,30 +29,42 @@ This repo contains the code for our **NeurIPS 2022** "*Intermediate Prototype Mi
 
 ### Scripts
 
+- **Step1** *choose training methods*
+
+  We use git branch to change the training method scripts. We have *two-stage* and *single-stage*.
+  ```
+  git checkout training_method
+  ```
+
 - **Step1** *setting the config*
 
   Change configuration via the `.yaml` files in `config`.
   
 - **Step2** *Training*
 
-  Run for training.
+  Run for contrastive learning.
   ```
-  python train.py
+  python train_contrastive.py --config /path/to/config_file
+  ```
+
+  Run for few-shot training.
+  ```
+  python train.py --config /path/to/config_file
   ```
 
 - **Step3** *Testing*
 
   Run for testing.
   ```
-  python test.py
+  python test.py --config /path/to/config_file
   ```
 
 ### Visualization
 
 <p align="middle">
-    <img src="figure/visualization.jpg">
+    <img src="figure/visualization.png">
 </p>
 
 ## References
 
-This repo is mainly built based on [CyCTR](https://github.com/GengDavid/CyCTR). Thanks for their great work!
+This repo is mainly built based on [IPMT](https://github.com/LIUYUANWEI98/IPMT). Thanks for their great work!

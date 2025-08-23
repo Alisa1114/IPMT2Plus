@@ -32,7 +32,7 @@ TRAIN:
   manual_seed: 123 
   print_freq: 5
   save_freq: 20
-  save_path: exp/model
+  save_path: exp/model/pascal/split0_resnet50/
   weight: 
   resume:  
   evaluate: True
