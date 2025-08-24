@@ -96,6 +96,8 @@ to prepare COCO-20^i data.
   python test.py --config /path/to/config_file
   ```
 
+  We provide all trained [model weights](https://mega.nz/folder/d7JixaCZ#E9VOe4yOS7Qj3_5URkEC9g) for performance evaluation.
+
 ## Visualization
 
 <p align="middle">
