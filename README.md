@@ -60,7 +60,7 @@ python prepare_coco_data.py
 ```
 to prepare COCO-20^i data.
 
-### Scripts
+## Training and Testing
 
 - **Step1** *download backbone models*
 
@@ -96,7 +96,7 @@ to prepare COCO-20^i data.
   python test.py --config /path/to/config_file
   ```
 
-### Visualization
+## Visualization
 
 <p align="middle">
     <img src="figure/fss-vis.png">
